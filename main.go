@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -28,14 +27,14 @@ const schema = `
 	}
 
 	type Subscription {
-		helloSaid(filter: String): HelloSaidEvent!
+		onMessage(filter: String): Message!
 	}
 
 	type Mutation {
-		sayHello(msg: String!): HelloSaidEvent!
+		sendMessage(msg: String!): Message!
 	}
 
-	type HelloSaidEvent {
+	type Message {
 		id: String!
 		msg: String!
 	}
@@ -56,7 +55,7 @@ func init() {
 
 func main() {
 	// init graphQL schema
-	s, err := graphql.ParseSchema(schema, newResolver())
+	s, err := graphql.ParseSchema(schema, newResolver(),graphql.UseFieldResolvers())
 	if err != nil {
 		panic(err)
 	}
@@ -72,31 +71,31 @@ func main() {
 }
 
 
-type helloSaidEvent struct {
+type message struct {
 	id  string
 	msg string
 }
 
-func (r *helloSaidEvent) Msg() string {
+func (r *message) Msg() string {
 	return r.msg
 }
 
-func (r *helloSaidEvent) ID() string {
+func (r *message) ID() string {
 	return r.id
 }
 
 type resolver struct {
-	helloSaidEvents     chan *helloSaidEvent
-	helloSaidSubscriber chan *helloSaidSubscriber
+	messageEvents     chan *message
+	helloSaidSubscriber chan *onMessageSubscriber
 }
 
 func newResolver() *resolver {
 	r := &resolver{
-		helloSaidEvents:     make(chan *helloSaidEvent),
-		helloSaidSubscriber: make(chan *helloSaidSubscriber),
+		messageEvents:     make(chan *message),
+		helloSaidSubscriber: make(chan *onMessageSubscriber),
 	}
 
-	go r.broadcastHelloSaid()
+	go r.broadcastMessageEvent()
 
 	return r
 }
@@ -105,80 +104,69 @@ func (r *resolver) Hello() string {
 	return "Hello world!"
 }
 
-func (r *resolver) SayHello(args struct{ Msg string }) *helloSaidEvent {
-	e := &helloSaidEvent{msg: args.Msg, id: uuid.New().String()}
+func (r *resolver) SendMessage(args struct{ Msg string }) *message {
+	e := &message{msg: args.Msg, id: uuid.New().String()}
 	go func() {
 		select {
-		case r.helloSaidEvents <- e:
+		case r.messageEvents <- e:
 		case <-time.After(1 * time.Second):
 		}
 	}()
 	return e
 }
 
-type helloSaidSubscriber struct {
+type onMessageSubscriber struct {
 	stop   <-chan struct{}
-	events chan<- *helloSaidEvent
+	events chan<- *message
 	filter string
 }
 
-func (r *resolver) broadcastHelloSaid() {
-	subscribers := map[string]*helloSaidSubscriber{}
+func (r *resolver) broadcastMessageEvent() {
+	subscribers := map[string]*onMessageSubscriber{}
 	unsubscribe := make(chan string)
 
 	// NOTE: subscribing and sending events are at odds.
 	for {
 		select {
-		case id := <-unsubscribe:
-			delete(subscribers, id)
-		case s := <-r.helloSaidSubscriber:
-			subscribers[randomID()] = s
-		case e := <-r.helloSaidEvents:
-			for id, s := range subscribers {
-				go func(id string, s *helloSaidSubscriber) {
-					select {
-					case <-s.stop:
-						unsubscribe <- id
-						return
-					default:
-					}
+			case id := <-unsubscribe:
+				delete(subscribers, id)
+			case s := <-r.helloSaidSubscriber:
+				subscribers[uuid.NewString()] = s
+			case e := <-r.messageEvents:
+				for id, s := range subscribers {
+					go func(id string, s *onMessageSubscriber) {
+						select {
+						case <-s.stop:
+							unsubscribe <- id
+							return
+						default:
+						}
 
-					if s.filter != "" && !strings.Contains(e.msg, s.filter) {
-						// Event does not match filter, skip sending
-						return
-					}
+						if s.filter != "" && !strings.Contains(e.msg, s.filter) {
+							// Event does not match filter, skip sending
+							return
+						}
 
-					select {
-					case <-s.stop:
-						unsubscribe <- id
-					case s.events <- e:
-					case <-time.After(time.Second):
-					}
-				}(id, s)
-			}
+						select {
+							case <-s.stop:
+								unsubscribe <- id
+							case s.events <- e:
+							case <-time.After(time.Second):
+						}
+					}(id, s)
+				}
 		}
 	}
 }
 
-func (r *resolver) HelloSaid(ctx context.Context, args struct{ Filter *string }) <-chan *helloSaidEvent {
-	c := make(chan *helloSaidEvent)
+func (r *resolver) OnMessage(ctx context.Context, args struct{ Filter *string }) <-chan *message {
+	c := make(chan *message)
 	filter := ""
 	if args.Filter != nil {
 		filter = *args.Filter
 	}
 	// NOTE: this could take a while
-	r.helloSaidSubscriber <- &helloSaidSubscriber{events: c, stop: ctx.Done(), filter: filter}
+	r.helloSaidSubscriber <- &onMessageSubscriber{events: c, stop: ctx.Done(), filter: filter}
 
 	return c
-}
-
-
-func randomID() string {
-	var letter = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-
-	b := make([]rune, 16)
-	for i := range b {
-		b[i] = letter[rand.Intn(len(letter))]
-	}
-	return string(b)
 }
