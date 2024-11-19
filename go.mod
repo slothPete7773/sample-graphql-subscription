@@ -7,4 +7,5 @@ require (
 	github.com/gorilla/websocket v1.4.1 // indirect
 	github.com/graph-gophers/graphql-go v1.5.0 // indirect
 	github.com/graph-gophers/graphql-transport-ws v0.0.2 // indirect
+	github.com/vektah/gqlparser/v2 v2.5.19
 )

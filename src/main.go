@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sample-subscription/src/subscription/graphqlws"
 	"strconv"
 	"strings"
 	"time"
@@ -12,33 +13,7 @@ import (
 	"github.com/google/uuid"
 	graphql "github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
-	"github.com/graph-gophers/graphql-transport-ws/graphqlws"
 )
-
-const schema = `
-	schema {
-		subscription: Subscription
-		mutation: Mutation
-		query: Query
-	}
-
-	type Query {
-		hello: String!
-	}
-
-	type Subscription {
-		onMessage(filter: String): Message!
-	}
-
-	type Mutation {
-		sendMessage(msg: String!): Message!
-	}
-
-	type Message {
-		id: String!
-		msg: String!
-	}
-`
 
 var httpPort = 8080
 
@@ -54,8 +29,13 @@ func init() {
 }
 
 func main() {
+	schema, err := os.ReadFile("./schema.graphql")
+	if err != nil {
+		panic(err)
+	}
+
 	// init graphQL schema
-	s, err := graphql.ParseSchema(schema, newResolver(),graphql.UseFieldResolvers())
+	s, err := graphql.ParseSchema(string(schema), newResolver(), graphql.UseFieldResolvers())
 	if err != nil {
 		panic(err)
 	}
@@ -70,28 +50,19 @@ func main() {
 	}
 }
 
-
 type message struct {
-	id  string
-	msg string
-}
-
-func (r *message) Msg() string {
-	return r.msg
-}
-
-func (r *message) ID() string {
-	return r.id
+	Id  string
+	Msg string
 }
 
 type resolver struct {
-	messageEvents     chan *message
+	messageEvents       chan *message
 	helloSaidSubscriber chan *onMessageSubscriber
 }
 
 func newResolver() *resolver {
 	r := &resolver{
-		messageEvents:     make(chan *message),
+		messageEvents:       make(chan *message),
 		helloSaidSubscriber: make(chan *onMessageSubscriber),
 	}
 
@@ -105,7 +76,7 @@ func (r *resolver) Hello() string {
 }
 
 func (r *resolver) SendMessage(args struct{ Msg string }) *message {
-	e := &message{msg: args.Msg, id: uuid.New().String()}
+	e := &message{Msg: args.Msg, Id: uuid.New().String()}
 	go func() {
 		select {
 		case r.messageEvents <- e:
@@ -128,33 +99,33 @@ func (r *resolver) broadcastMessageEvent() {
 	// NOTE: subscribing and sending events are at odds.
 	for {
 		select {
-			case id := <-unsubscribe:
-				delete(subscribers, id)
-			case s := <-r.helloSaidSubscriber:
-				subscribers[uuid.NewString()] = s
-			case e := <-r.messageEvents:
-				for id, s := range subscribers {
-					go func(id string, s *onMessageSubscriber) {
-						select {
-						case <-s.stop:
-							unsubscribe <- id
-							return
-						default:
-						}
+		case id := <-unsubscribe:
+			delete(subscribers, id)
+		case s := <-r.helloSaidSubscriber:
+			subscribers[uuid.NewString()] = s
+		case e := <-r.messageEvents:
+			for id, s := range subscribers {
+				go func(id string, s *onMessageSubscriber) {
+					select {
+					case <-s.stop:
+						unsubscribe <- id
+						return
+					default:
+					}
 
-						if s.filter != "" && !strings.Contains(e.msg, s.filter) {
-							// Event does not match filter, skip sending
-							return
-						}
+					if s.filter != "" && !strings.Contains(e.Msg, s.filter) {
+						// Event does not match filter, skip sending
+						return
+					}
 
-						select {
-							case <-s.stop:
-								unsubscribe <- id
-							case s.events <- e:
-							case <-time.After(time.Second):
-						}
-					}(id, s)
-				}
+					select {
+					case <-s.stop:
+						unsubscribe <- id
+					case s.events <- e:
+					case <-time.After(time.Second):
+					}
+				}(id, s)
+			}
 		}
 	}
 }

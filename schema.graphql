@@ -1,0 +1,22 @@
+schema {
+  subscription: Subscription
+  mutation: Mutation
+  query: Query
+}
+
+type Query {
+  hello: String!
+}
+
+type Subscription {
+  onMessage(filter: String): Message!
+}
+
+type Mutation {
+  sendMessage(msg: String!): Message!
+}
+
+type Message {
+  id: String!
+  msg: String!
+}
