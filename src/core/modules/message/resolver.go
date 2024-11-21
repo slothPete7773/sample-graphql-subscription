@@ -28,11 +28,19 @@ func (r MessageResolver) OnMessage(ctx context.Context, input struct{ Filter *st
 
 	return c
 }
-func (MessageResolver) SendMessage(ctx context.Context, input struct{ Msg string }) Message {
-	return Message{
+func (r MessageResolver) SendMessage(ctx context.Context, input struct{ Msg string }) Message {
+	msg := Message{
 		Id:  uuid.New().String(),
 		Msg: input.Msg,
 	}
+	go func() {
+		select {
+		case r.MessageEvents <- &msg:
+		case <-time.After(1 * time.Second):
+		}
+	}()
+	return msg
+}
 
 func (r *MessageResolver) BroadcastMessageEvent() {
 	subscribers := map[string]*OnMessageSubscriber{}
