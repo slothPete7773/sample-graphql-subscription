@@ -2,6 +2,8 @@ package message
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -14,6 +16,7 @@ type MessageResolver struct {
 func (MessageResolver) Hello() string {
 	return "Hello"
 }
+
 func (r MessageResolver) OnMessage(ctx context.Context, input struct{ Filter *string }) <-chan *Message {
 	c := make(chan *Message)
 	filter := ""
@@ -25,9 +28,54 @@ func (r MessageResolver) OnMessage(ctx context.Context, input struct{ Filter *st
 
 	return c
 }
-func (MessageResolver) SendMessage(ctx context.Context, input struct{ Msg string }) Message {
-	return Message{
+func (r MessageResolver) SendMessage(ctx context.Context, input struct{ Msg string }) Message {
+	msg := Message{
 		Id:  uuid.New().String(),
 		Msg: input.Msg,
+	}
+	go func() {
+		select {
+		case r.MessageEvents <- &msg:
+		case <-time.After(1 * time.Second):
+		}
+	}()
+	return msg
+}
+
+func (r *MessageResolver) BroadcastMessageEvent() {
+	subscribers := map[string]*OnMessageSubscriber{}
+	unsubscribe := make(chan string)
+
+	// NOTE: subscribing and sending events are at odds.
+	for {
+		select {
+		case id := <-unsubscribe:
+			delete(subscribers, id)
+		case s := <-r.HelloSaidSubscriber:
+			subscribers[uuid.NewString()] = s
+		case e := <-r.MessageEvents:
+			for id, s := range subscribers {
+				go func(id string, s *OnMessageSubscriber) {
+					select {
+					case <-s.Stop:
+						unsubscribe <- id
+						return
+					default:
+					}
+
+					if s.Filter != "" && !strings.Contains(e.Msg, s.Filter) {
+						// Event does not match filter, skip sending
+						return
+					}
+
+					select {
+					case <-s.Stop:
+						unsubscribe <- id
+					case s.Events <- e:
+					case <-time.After(time.Second):
+					}
+				}(id, s)
+			}
+		}
 	}
 }
