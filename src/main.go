@@ -12,7 +12,7 @@ import (
 	"github.com/graph-gophers/graphql-go/relay"
 )
 
-var httpPort = 8080
+var httpPort = 8787
 
 func init() {
 	port := os.Getenv("HTTP_PORT")

@@ -2,6 +2,7 @@ package message
 
 import (
 	"context"
+	"log"
 	"strings"
 	"time"
 
@@ -33,6 +34,8 @@ func (r MessageResolver) SendMessage(ctx context.Context, input struct{ Msg stri
 		Id:  uuid.New().String(),
 		Msg: input.Msg,
 	}
+
+	log.Println("Send Msg: ", msg)
 	go func() {
 		select {
 		case r.MessageEvents <- &msg:
