@@ -20,7 +20,7 @@ func NewResolver() *Resolver {
 	// r.MessageResolver.MessageEvents = make(chan *message.Message)
 	// r.MessageResolver.HelloSaidSubscriber = make(chan *message.OnMessageSubscriber)
 
-	go r.BroadcastMessageEvent()
+	go r.MessageResolver.BroadcastMessageEvent()
 
 	return &r
 }
