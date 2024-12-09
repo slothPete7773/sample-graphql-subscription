@@ -3,13 +3,14 @@ package message
 import (
 	"context"
 	"log"
+	"sample-subscription/src/pubsub"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 )
 
 type MessageResolver struct {
+	PubSub              *pubsub.PubSub
 	MessageEvents       chan *Message
 	HelloSaidSubscriber chan *OnMessageSubscriber
 }
@@ -24,8 +25,30 @@ func (r MessageResolver) OnMessage(ctx context.Context, input struct{ Filter *st
 	if input.Filter != nil {
 		filter = *input.Filter
 	}
-	// NOTE: this could take a while
-	r.HelloSaidSubscriber <- &OnMessageSubscriber{Events: c, Stop: ctx.Done(), Filter: filter}
+	// Subscribe to the topic
+	subscription, err := r.PubSub.Subscribe(ctx, "message_topic")
+	if err != nil {
+		log.Println("Subscription error:", err)
+		close(c)
+		return c
+	}
+
+	go func() {
+		defer close(c)
+		for {
+			select {
+			case <-ctx.Done():
+				r.PubSub.Unsubscribe("message_topic", subscription.ID)
+				return
+			case msg := <-subscription.Channel:
+				if event, ok := msg.(*Message); ok {
+					if filter == "" || strings.Contains(event.Msg, filter) {
+						c <- event
+					}
+				}
+			}
+		}
+	}()
 
 	return c
 }
@@ -35,50 +58,9 @@ func (r MessageResolver) SendMessage(ctx context.Context, input struct{ Msg stri
 		Msg: input.Msg,
 	}
 
-	log.Println("Send Msg: ", msg)
-	go func() {
-		select {
-		case r.MessageEvents <- &msg:
-		case <-time.After(1 * time.Second):
-		}
-	}()
-	return msg
-}
-
-func (r *MessageResolver) BroadcastMessageEvent() {
-	subscribers := map[string]*OnMessageSubscriber{}
-	unsubscribe := make(chan string)
-
-	// NOTE: subscribing and sending events are at odds.
-	for {
-		select {
-		case id := <-unsubscribe:
-			delete(subscribers, id)
-		case s := <-r.HelloSaidSubscriber:
-			subscribers[uuid.NewString()] = s
-		case e := <-r.MessageEvents:
-			for id, s := range subscribers {
-				go func(id string, s *OnMessageSubscriber) {
-					select {
-					case <-s.Stop:
-						unsubscribe <- id
-						return
-					default:
-					}
-
-					if s.Filter != "" && !strings.Contains(e.Msg, s.Filter) {
-						// Event does not match filter, skip sending
-						return
-					}
-
-					select {
-					case <-s.Stop:
-						unsubscribe <- id
-					case s.Events <- e:
-					case <-time.After(time.Second):
-					}
-				}(id, s)
-			}
-		}
+	log.Println("Publishing message:", msg)
+	if err := r.PubSub.Publish("message_topic", &msg); err != nil {
+		log.Println("Error publishing message:", err)
 	}
+	return msg
 }
